@@ -1,0 +1,380 @@
+<!doctype html>
+<html>
+	<head>
+		<title></title>
+		<style>
+			body { font: 13px Helvetica, Arial; }
+			#messages { list-style-type: none; }
+			#messages li { padding: 5px 10px; }
+			#messages li:nth-child(odd) { background: #eee; }
+			ul { padding: 1px; }
+
+			.highlighted { background-color: #aa7; }
+
+			.highlighted2 { background-color: yellow; }
+			.chosen { background-color: yellow; border: 1px black solid }
+
+			.vert_card {
+				writing-mode: vertical-lr;
+				text-orientation: upright;
+				border: 1px lightgrey solid;
+				margin: 1px;
+			}
+			.horiz_card {
+				border: 1px lightgrey solid;
+				margin: 1px;
+				display: block;
+			}
+
+		</style>
+	</head>
+	<script src="/socket.io/socket.io.js"></script>
+	<script>
+		var socket = null;
+		var chosen_hand = null;
+		var chosen_deck = null;
+		var card_style = "vert_card";
+
+		// 手机平台就横着显示
+		if( /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ) {
+			card_style = "horiz_card";
+		}
+
+		// not started = 未开始
+		// pick one card = 只需要选一张牌
+		// pick two cards = 需要选两张牌
+		var game_state = 'not started';
+
+		var hand_to_deck_map = null;
+		var deck_to_hand_map = null;
+
+		function GetDeckCardIdx(x) {
+			var d = $('#deck').children();
+			for (var i=0; i<d.length; i++) {
+			if (d[i] == x) { return i; }
+		}
+		return -999;
+		}
+		function GetHandCardIdx(x) {
+			var d = $('#hand').children();
+			for (var i=0; i<d.length; i++) {
+			if (d[i] == x) { return i; }
+		}
+		return -999;
+		}
+		function ModifyHighlight(key, key_type, class_name, op) {
+			var mapping = undefined;
+		var targets = undefined;
+		var idx = undefined;
+		if (key_type == 'h') { mapping = hand_to_deck_map; idx = GetHandCardIdx(key); targets = $('#deck').children(); }
+		if (key_type == 'd') { mapping = deck_to_hand_map; idx = GetDeckCardIdx(key); targets = $('#hand').children(); }
+
+		if (mapping != undefined) {
+			if (mapping[idx] != undefined) {
+				for (var x = 0; x<mapping[idx].length; x++) {
+					if (op == "remove")
+						targets[mapping[idx][x]].classList.remove(class_name);
+					else
+						targets[mapping[idx][x]].classList.add(class_name);
+				}
+			}
+		}
+		}
+		function OnSelectFromDeck(x) {
+			var i = GetDeckCardIdx(x);
+
+		// Matched ?
+		if (chosen_hand != null) {
+			var h_idx = GetHandCardIdx(chosen_hand);
+			if (hand_to_deck_map[h_idx] != undefined &&
+					hand_to_deck_map[h_idx].indexOf(i) != -1) {
+
+				// SEND TO SERVER
+				console.log("该把选择送给服务器了");
+				socket.emit('chosen two cards', h_idx, i);
+			}
+		}
+		}
+		function OnSelectFromHand(x) {
+
+		if (chosen_hand == x) {
+			chosen_hand.classList.remove('chosen');
+			ModifyHighlight(chosen_hand, 'h', 'highlighted2', 'remove');
+			chosen_hand = null;
+		} else {
+			if (chosen_hand != null) {
+				chosen_hand.classList.remove('chosen');
+				ModifyHighlight(chosen_hand, 'h', 'highlighted2', 'remove');
+			}
+			ModifyHighlight(x, 'h', 'highlighted2', 'add');
+			x.classList.add('chosen');
+			chosen_hand = x;
+
+			if (game_state == 'pick one card') {
+				socket.emit('chosen one card', GetHandCardIdx(x));
+			}
+		}
+
+
+			var i = GetHandCardIdx(x);
+		console.log('选定了手上的牌[' + i + ']');
+		}
+		function OnHandHoverIn(x) {
+			var i = GetHandCardIdx(x);
+		x.classList.add('highlighted');
+		ModifyHighlight(x, 'h', 'highlighted', 'add');
+		}
+		function OnHandHoverOut(x) {
+			var i = GetHandCardIdx(x);
+		x.classList.remove('highlighted');
+		ModifyHighlight(x, 'h', 'highlighted', 'remove');
+		}
+		function OnDeckHoverIn(x) {
+			var i = GetDeckCardIdx(x);
+		x.classList.add('highlighted');
+		ModifyHighlight(x, 'd', 'highlighted', 'add');
+		}
+		function OnDeckHoverOut(x) {
+			var i = GetDeckCardIdx(x);
+		x.classList.remove('highlighted');
+		ModifyHighlight(x, 'd', 'highlighted', 'remove');
+		}
+		function CardToString(x) {
+			var ret = x.label;
+			ret = ret + "・";
+			ret = ret + x.season;
+			return ret;
+		}
+
+		function ScrollMessagesToBottom() {
+			var x = $('#messages_div');
+			x.scrollTop(x.prop('scrollHeight'));
+		}
+
+		function AppendMessage(msg) {
+			// 右边的大小调得和左边一样
+			$('#messages_div').height($('#game_div').height());
+			$('#messages').append($('<li>').text(msg));
+			ScrollMessagesToBottom();
+		}
+	</script>
+	<script src="/socket.io/socket.io.js"></script>
+	<script src="https://code.jquery.com/jquery-1.11.1.js"></script>
+	<script>
+		$(function () {
+			socket = io();
+			$('#form_send').submit(function(){
+				socket.emit('chat message', $('#m').val());
+				$('#m').val('');
+				return false;
+			});
+
+			socket.on('game state change', function(s) {
+				game_state = s;
+				if (s == 'game ended') {
+					ScrollMessagesToBottom();
+					$('#btn_ready').prop('disabled', false);
+					$('#btn_cancel_match').prop('disabled', false);
+					$('#btn_confirm_match').prop('disabled', false);
+					$('#btn_single_player').prop('disabled', false);
+				} else if (s == 'other players move') {
+					AppendMessage("请等待对方玩家行动");
+				} else if (s == 'game started') {
+					$('#btn_ready').attr('disabled', 'disabled');
+					$('#btn_cancel_match').attr('disabled', 'disabled');
+					$('#btn_confirm_match').attr('disabled', 'disabled');
+					$('#btn_single_player').attr('disabled', 'disabled');
+				}
+			});
+
+			socket.on('chat message', function(msg) {
+				AppendMessage(msg);
+				ScrollMessagesToBottom();
+			});
+
+			// 开始匹配的按钮事件
+			$('#btn_ready').on('click', function(){
+				socket.emit('ready', '');
+				$('#btn_ready').attr('disabled', 'disabled');
+
+				$('#btn_cancel_match').show();
+				$('#btn_confirm_match').show();
+				$('#btn_confirm_match').attr('disabled', 'disabled');
+				$('#btn_cancel_match').prop('disabled', false);
+				return false;
+			});
+
+			// 确认匹配
+			$('#btn_confirm_match').hide(); // 初始隐藏起来
+			$('#btn_confirm_match').on('click', function() {
+				socket.emit('confirm match');
+			});
+
+			// 取消匹配
+			$('#btn_cancel_match').on('click', function() {
+				$('#btn_confirm_match').hide();
+				$('#btn_cancel_match').hide();
+				$('#btn_ready').prop('disabled', false);
+				socket.emit('cancel match');
+			});
+			$('#btn_cancel_match').hide(); // 该按钮开始时得隐藏起来
+
+			socket.on('match cancelled', function(msg) {
+				$('#messages').append($('<li>').text(msg));
+				$('#btn_ready').prop('disabled', false);
+				$('#btn_confirm_match').hide();
+				$('#btn_cancel_match').hide();
+			});
+
+			// 匹配完成
+			socket.on('found match', function(x) {
+				$('btn_confirm_match').prop('disabled', false);
+			});
+
+			// 接收到当前玩家数
+			socket.on('total user count', function(cnt) {
+				$('#messages').append($('<li>').text("现在有 " + cnt + " 个用户"));
+			});
+
+			// 单人游戏
+			$('#btn_single_player').on('click', function() {
+				socket.emit('play singleplayer');
+			});
+
+			// 更换为横着显示
+			$('#btn_horiz_cards').on('click', function() {
+				card_style = "horiz_card";
+				$('.vert_card').addClass('horiz_card').removeClass('vert_card');
+			});
+
+			// 更换为竖着显示
+			$('#btn_vert_cards').on('click', function() {
+				card_style = "vert_card";
+				$('.horiz_card').addClass('vert_card').removeClass('horiz_card');
+			});
+
+			// 牌桌状态更新
+			socket.on('update game stats', function(deck, hand, mapping, used, used_opponent, hand_opponent, score, score_opponent) {
+				console.log("牌桌更新事件");
+
+				$('#deck').empty();
+				$('#hand').empty();
+				$('#used').empty();
+				$('#hand_opponent').empty();
+				$('#used_opponent').empty();
+
+				$('#score').text(score);
+				$('#score_opponent').text(score_opponent);
+
+				// 公共区域的牌
+				var num_hidden = 0;
+				for (var i=0; i<deck.length; i++) {
+					// 前十张 可以选中
+					if (i < 10) {
+						$('#deck').append($('<span>').addClass(card_style).html(CardToString(deck[i])).on('click', function() {
+							OnSelectFromDeck(this);
+						}).hover(
+							function() { OnDeckHoverIn(this); },
+							function() { OnDeckHoverOut(this);}
+						));
+					} else {
+						// 十张以后的 不能选中
+						num_hidden ++;
+					}
+				}
+				if (num_hidden > 0) {
+					$('#deck').append($('<span>').text("【剩余牌数：" + num_hidden + "】"));
+				}
+
+				// 己方的手牌
+				for (var i=0; i<hand.length; i++) {
+					$('#hand').append($('<span>').addClass(card_style).html(CardToString(hand[i])).on('click', function() {
+					OnSelectFromHand(this);
+				}).hover(
+					function() { OnHandHoverIn(this); },
+					function() { OnHandHoverOut(this);}
+				));
+				}
+
+				// 己方回收区的牌
+				for (var i=0; i<used.length; i++) {
+					$('#used').append($('<span>').addClass(card_style).html(CardToString(used[i])));
+				}
+
+				// 对方回收区的牌
+				for (var i=0; i<used_opponent.length; i++) {
+					$('#used_opponent').append($('<span>').addClass(card_style).html(CardToString(used_opponent[i])));
+				}
+
+				// 对方的手牌
+				for (var i=0; i<hand_opponent.length; i++) {
+					$('#hand_opponent').append($('<span>').addClass(card_style).html(CardToString(
+						{ label: '？？', season: '？' }
+				//		hand_opponent[i]
+					)));
+				}
+
+				console.log(mapping);
+
+				hand_to_deck_map = mapping[1];
+				deck_to_hand_map = mapping[0];
+			});
+
+			// 找到了匹配对象
+			socket.on('match found', function(x) {
+				$('#btn_confirm_match').prop('disabled', false);
+			});
+		});
+	</script>
+	<body>
+
+	<div style="width: 50%; float: left;" id="game_div">
+		<table border="0px">
+		<tr>
+			<td>对手<br/>得分</td>
+			<td style="width:100%"><ul id="score_opponent" style="border: 1px orange dotted"></ul></td>
+		</tr>
+		<tr>
+			<td>对手<br/>回收区</td>
+			<td><ul id="used_opponent" style="border: 1px orange dotted"></ul></td>
+		</tr>
+		<tr>
+			<td>对手<br/>手牌</td>
+			<td><ul id="hand_opponent" style="border: 1px orange solid" ></ul></td>
+		</tr>
+		<tr>
+			<td>公共<br/>牌池</td>
+			<td><ul id="deck" style="border: 1px blue solid" ></ul></td>
+		</tr>
+		<tr>
+			<td>你的<br/>手牌</td>
+			<td><ul id="hand" style="border: 1px black solid"></ul></td>
+		</tr>
+		<tr>
+			<td>你的<br/>回收区</td>
+			<td><ul id="used" style="border: 1px black dotted"></ul></td>
+		</tr>
+		<tr>
+			<td>你的<br/>得分</td>
+			<td><ul id="score" style="border: 1px black dotted"></ul></td>
+		</tr>
+		</table>
+		<!--<form action="" id="form_send">
+			<input id="m" autocomplete="off" /><button>Send</button>
+		</form>-->
+		<button id="btn_ready">开始匹配</button>
+		<button id="btn_confirm_match" disabled>确认匹配</button>
+		<button id="btn_cancel_match" disabled>取消匹配</button>
+		<br/>
+		<button id="btn_single_player">单人游戏</button>
+		<hr/>
+		<button id="btn_horiz_cards">横着显示</button>
+		<button id="btn_vert_cards">竖着显示</button>
+	</div>
+	<div style="width: 50%; float: left; overflow-y: scroll;" id="messages_div">
+		<ul id="messages"></ul>
+	</div>
+
+	<div style="clear: both;"></div>
+	</body>
+</html>
